@@ -1,151 +1,54 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import numpy as np
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+st.title("📊 줄기와 잎 그림 & 도수분포표 생성기 (계급폭 선택형)")
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# 데이터 입력
+st.write("자료를 쉼표(,)로 구분하여 입력하세요. 예: 12, 14, 16, 17, 19, 22, 24, 25, 29, 30")
+data_input = st.text_area("자료 입력", "12, 14, 16, 17, 19, 22, 24, 25, 29, 30")
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+# 계급폭 선택 (5 또는 10)
+bin_width = st.radio("계급폭을 선택하세요", [5, 10])
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+try:
+    # 데이터 정리
+    data = sorted([int(x.strip()) for x in data_input.split(",") if x.strip() != ""])
+    min_val, max_val = min(data), max(data)
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+    # 기준을 0 또는 10단위로 정렬
+    start = (min_val // bin_width) * bin_width
+    end = ((max_val // bin_width) + 1) * bin_width
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+    # 계급 경계 생성
+    bins = np.arange(start, end + bin_width, bin_width)
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+    # 도수 계산
+    counts, bin_edges = np.histogram(data, bins=bins)
+    df = pd.DataFrame({
+        "계급": [f"{int(bin_edges[i])} - {int(bin_edges[i+1])}" for i in range(len(counts))],
+        "도수": counts
+    })
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+    st.subheader("📋 도수분포표")
+    st.dataframe(df, use_container_width=True)
 
-    return gdp_df
+    # 줄기와 잎 그림
+    st.subheader("🌿 줄기와 잎 그림")
+    st.write("※ 줄기는 십의 자리, 잎은 일의 자리로 나누어 표시됩니다.")
 
-gdp_df = get_gdp_data()
+    # 줄기와 잎 나누기
+    stems = {}
+    for num in data:
+        stem = num // 10
+        leaf = num % 10
+        if stem not in stems:
+            stems[stem] = []
+        stems[stem].append(leaf)
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+    for stem, leaves in stems.items():
+        leaves_str = " ".join(str(l) for l in sorted(leaves))
+        st.write(f"**{stem} |** {leaves_str}")
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+except Exception as e:
+    st.error(f"⚠️ 오류가 발생했습니다: {e}")
